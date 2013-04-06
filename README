@@ -7,8 +7,9 @@ variables, and handle contention gracefully.
 
 But a drawback is their size.  On Linux, a `pthread_mutex_t` occupies
 24 bytes on 32-bit machines and 40 bytes on 64-bit machines.  If the
-mutex is protecting a small data structure, this can increase memory
-usage and reduce the effectiveness of caches.
+mutex is protecting a small data structure, this can lead to unwelcome
+overheads in memory usage, and reduce the effectiveness of
+caches.
 
 Some pthreads implementations also have spinlocks
 (`pthread_spinlock_t`).  These are smaller (4 bytes on Linux).  But
@@ -20,9 +21,11 @@ Hence skinny mutexes: This library provides mutexes that occupy one
 pointer-sized word.  Like pthreads mutexes, they integrate with
 condition variables and handle contention gracefully, so code using
 pthreads mutexes can be easily converted to use skinny mutexes
-instead.  I haven't done detailed performance testing yet, but
-performance should similar to pthreads mutexes, and better in some
-cases.
+instead.
+
+Detailed performance testing is still on my todo list, but performance
+should generally be similar to pthreads mutexes, and it might even be
+better in some cases.
 
 ## How to use
 
