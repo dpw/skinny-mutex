@@ -1,5 +1,12 @@
-#include <pthread.h>
-#include <errno.h>
+#ifndef _SKINNY_MUTEX_H
+#define _SKINNY_MUTEX_H
+
+/*
+ * Required imports:
+ * #include <pthread.h>
+ * #include <errno.h>
+ *
+ */
 
 typedef struct {
 	void *val;
@@ -45,3 +52,5 @@ static __inline__ int skinny_mutex_unlock(skinny_mutex_t *m)
 extern int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
 extern int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
 				       const struct timespec *abstime);
+
+#endif /* _SKINNY_MUTEX_H */

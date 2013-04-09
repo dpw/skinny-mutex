@@ -2,6 +2,8 @@
 
 #include <time.h>
 #include <assert.h>
+#include <pthread.h>
+#include <errno.h>
 
 #include "skinny_mutex.h"
 
