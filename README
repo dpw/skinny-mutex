@@ -23,9 +23,8 @@ condition variables and handle contention gracefully, so code using
 pthreads mutexes can be easily converted to use skinny mutexes
 instead.
 
-Detailed performance testing is still on my todo list, but performance
-should generally be similar to pthreads mutexes, and it might even be
-better in some cases.
+Performance should generally be similar to pthreads mutexes, and it
+might even be better in some cases.
 
 ## How to use
 
