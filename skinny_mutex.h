@@ -1,8 +1,12 @@
 #ifndef _SKINNY_MUTEX_H
 #define _SKINNY_MUTEX_H
 
-#include <pthread.h>
-#include <errno.h>
+/*
+ * Required imports:
+ * #include <pthread.h>
+ * #include <errno.h>
+ *
+ */
 
 typedef struct {
 	void *val;
