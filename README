@@ -23,8 +23,12 @@ condition variables and handle contention gracefully, so code using
 pthreads mutexes can be easily converted to use skinny mutexes
 instead.
 
-Performance should generally be similar to pthreads mutexes, and it
-might even be better in some cases.
+Skinny mutexes use atomic operations to when possible (e.g. when
+locking or unlocking an uncontended skinny mutex), and fall back to
+the pthreads primitives when necessary (e.g. when a lock is contended
+causing a thread to block).  So you will still need to compile with
+`-pthread`.  Performance should generally be similar to pthreads
+mutexes, and it might even be better in some cases.
 
 ## How to use
 
