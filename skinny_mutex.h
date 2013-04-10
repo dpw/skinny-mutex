@@ -4,6 +4,10 @@
 #include <pthread.h>
 #include <errno.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
 	void *val;
 } skinny_mutex_t;
@@ -48,5 +52,9 @@ static __inline__ int skinny_mutex_unlock(skinny_mutex_t *m)
 int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
 int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
 				const struct timespec *abstime);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SKINNY_MUTEX_H */
