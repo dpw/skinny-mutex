@@ -21,7 +21,7 @@ static __inline__ int skinny_mutex_destroy(skinny_mutex_t *m)
 
 #define SKINNY_MUTEX_INITIALIZER = { 0 };
 
-extern int skinny_mutex_lock_slow(skinny_mutex_t *m);
+int skinny_mutex_lock_slow(skinny_mutex_t *m);
 
 static __inline__ int skinny_mutex_lock(skinny_mutex_t *m)
 {
@@ -33,7 +33,7 @@ static __inline__ int skinny_mutex_lock(skinny_mutex_t *m)
 		return skinny_mutex_lock_slow(m);
 }
 
-extern int skinny_mutex_unlock_slow(skinny_mutex_t *m);
+int skinny_mutex_unlock_slow(skinny_mutex_t *m);
 
 static __inline__ int skinny_mutex_unlock(skinny_mutex_t *m)
 {
@@ -45,8 +45,8 @@ static __inline__ int skinny_mutex_unlock(skinny_mutex_t *m)
 		return skinny_mutex_unlock_slow(m);
 }
 
-extern int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
-extern int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
-				       const struct timespec *abstime);
+int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
+int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
+				const struct timespec *abstime);
 
 #endif /* SKINNY_MUTEX_H */
