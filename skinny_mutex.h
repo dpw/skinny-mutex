@@ -1,5 +1,5 @@
-#ifndef _SKINNY_MUTEX_H
-#define _SKINNY_MUTEX_H
+#ifndef SKINNY_MUTEX_H
+#define SKINNY_MUTEX_H
 
 #include <pthread.h>
 #include <errno.h>
@@ -49,4 +49,4 @@ extern int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
 extern int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
 				       const struct timespec *abstime);
 
-#endif /* _SKINNY_MUTEX_H */
+#endif /* SKINNY_MUTEX_H */
