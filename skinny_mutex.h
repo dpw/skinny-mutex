@@ -23,7 +23,7 @@ static __inline__ int skinny_mutex_destroy(skinny_mutex_t *m)
 	return !m->val ? 0 : EBUSY;
 }
 
-#define SKINNY_MUTEX_INITIALIZER = { 0 };
+#define SKINNY_MUTEX_INITIALIZER { (void *)0 }
 
 int skinny_mutex_lock_slow(skinny_mutex_t *m);
 

@@ -8,11 +8,16 @@
 static void test_simple(void)
 {
 	skinny_mutex_t mutex;
+	static skinny_mutex_t static_mutex = SKINNY_MUTEX_INITIALIZER;
 
 	assert(!skinny_mutex_init(&mutex));
 	assert(!skinny_mutex_lock(&mutex));
 	assert(!skinny_mutex_unlock(&mutex));
 	assert(!skinny_mutex_destroy(&mutex));
+
+	assert(!skinny_mutex_lock(&static_mutex));
+	assert(!skinny_mutex_unlock(&static_mutex));
+	assert(!skinny_mutex_destroy(&static_mutex));
 }
 
 struct test_contention {
