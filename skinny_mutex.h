@@ -49,6 +49,7 @@ static __inline__ int skinny_mutex_unlock(skinny_mutex_t *m)
 		return skinny_mutex_unlock_slow(m);
 }
 
+int skinny_mutex_trylock(skinny_mutex_t *m);
 int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
 int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
 				const struct timespec *abstime);

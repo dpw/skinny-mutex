@@ -77,6 +77,25 @@ static void test_contention(void)
 	assert(!skinny_mutex_destroy(&tc.mutex));
 }
 
+static void *trylock_thread(void *v_mutex)
+{
+	skinny_mutex_t *mutex = v_mutex;
+	assert(skinny_mutex_trylock(mutex) == EBUSY);
+	return NULL;
+}
+
+static void test_trylock(void)
+{
+	skinny_mutex_t mutex;
+	pthread_t thread;
+
+	assert(!skinny_mutex_init(&mutex));
+	assert(!skinny_mutex_trylock(&mutex));
+	assert(!pthread_create(&thread, NULL, trylock_thread, &mutex));
+	assert(!pthread_join(thread, NULL));
+	assert(!skinny_mutex_unlock(&mutex));
+	assert(!skinny_mutex_destroy(&mutex));
+}
 
 struct test_cond_wait {
 	skinny_mutex_t mutex;
@@ -149,6 +168,7 @@ int main(void)
 {
 	test_simple();
 	test_contention();
+	test_trylock();
 	test_cond_wait();
 	test_cond_timedwait();
 	return 0;
