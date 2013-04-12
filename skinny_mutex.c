@@ -591,6 +591,18 @@ int skinny_mutex_unlock_slow(skinny_mutex_t *skinny)
 	return !res2 ? res : res2;
 }
 
+/* Thread cancallation cleanup handler when waiting for the condition
+   variable below. */
+static void cond_wait_cleanup(void *v_skinny)
+{
+	skinny_mutex_t *skinny = v_skinny;
+
+	/* Cancellation of pthread_cond_wait re-acquires fat->mutex,
+	 * and we have it pinned, so we can access the fat mutex
+	 * directly from the skinny mutex for once. */
+	assert(!fat_mutex_release(skinny, skinny->val));
+}
+
 int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
 				const struct timespec *abstime)
 {
@@ -613,10 +625,15 @@ int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
           fat_mutex. */
 	fat->held = 0;
 
+	/* pthread_cond_wait is a cancellation point */
+	pthread_cleanup_push(cond_wait_cleanup, skinny);
+
 	if (!abstime)
 		res = pthread_cond_wait(cond, &fat->mutex);
 	else
 		res = pthread_cond_timedwait(cond, &fat->mutex, abstime);
+
+	pthread_cleanup_pop(0);
 
 	if (!res || res == ETIMEDOUT) {
 		int res2 = fat_mutex_lock(skinny, fat);

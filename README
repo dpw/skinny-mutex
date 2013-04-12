@@ -81,12 +81,6 @@ Support for the process-shared and priority ceiling attributes
 `pthread_mutexattr_setprioceiling`) is also unlikely, as they seem to
 be of marginal usefulness and/or hard to implement.
 
-`skinny_mutex_lock`, `skinny_mutex_cond_wait` and
-`skinny_mutex_cond_timedwait` do not necessarily behave in the same
-way as their pthreads equivalents with regard to thread cancellation.
-I believe this can be fixed fairly easily; it just requires scrutiny
-of the pthreads specification and careful testing.
-
 ## Portability
 
 The code uses gcc's atomic built-ins, so should be widely portable.

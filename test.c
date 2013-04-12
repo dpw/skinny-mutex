@@ -107,10 +107,9 @@ static void *test_cond_wait_thread(void *v_tcw)
 {
 	struct test_cond_wait *tcw = v_tcw;
 
-	delay();
 	assert(!skinny_mutex_lock(&tcw->mutex));
-	tcw->flag = 1;
-	assert(!pthread_cond_signal(&tcw->cond));
+	while (!tcw->flag)
+		assert(!skinny_mutex_cond_wait(&tcw->cond, &tcw->mutex));
 	assert(!skinny_mutex_unlock(&tcw->mutex));
 
 	return NULL;
@@ -128,9 +127,10 @@ static void test_cond_wait(void)
 
 	assert(!pthread_create(&thread, NULL, test_cond_wait_thread, &tcw));
 
+	delay();
 	assert(!skinny_mutex_lock(&tcw.mutex));
-	while (!tcw.flag)
-		assert(!skinny_mutex_cond_wait(&tcw.cond, &tcw.mutex));
+	tcw.flag = 1;
+	assert(!pthread_cond_signal(&tcw.cond));
 	assert(!skinny_mutex_unlock(&tcw.mutex));
 
 	assert(!pthread_join(thread, NULL));
@@ -164,6 +164,27 @@ static void test_cond_timedwait(void)
 	assert(!pthread_cond_destroy(&cond));
 }
 
+static void test_cond_wait_cancellation(void)
+{
+	struct test_cond_wait tcw;
+	pthread_t thread;
+	void *retval;
+
+	assert(!skinny_mutex_init(&tcw.mutex));
+	assert(!pthread_cond_init(&tcw.cond, NULL));
+	tcw.flag = 0;
+
+	assert(!pthread_create(&thread, NULL, test_cond_wait_thread, &tcw));
+
+	delay();
+	assert(!pthread_cancel(thread));
+	assert(!pthread_join(thread, &retval));
+	assert(retval == PTHREAD_CANCELED);
+
+	assert(!skinny_mutex_destroy(&tcw.mutex));
+	assert(!pthread_cond_destroy(&tcw.cond));
+}
+
 int main(void)
 {
 	test_simple();
@@ -171,5 +192,6 @@ int main(void)
 	test_trylock();
 	test_cond_wait();
 	test_cond_timedwait();
+	test_cond_wait_cancellation();
 	return 0;
 }
