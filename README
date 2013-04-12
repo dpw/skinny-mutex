@@ -53,7 +53,10 @@ following substitutions:
 Note that `skinny_mutex_init` does not take an attributes argument
 (see below for more details).  Other than that, all the arguments of
 the functions mentioned correspond to the pthreads ones, and their
-specifications and return values are intended to match exactly.
+specifications and return values are intended to correspond exactly.
+
+In particular, `skinny_mutex_lock` is not a thread cancellation point,
+and `skinny_mutex_cond_wait` is.
 
 ## Limitations compared to pthread_mutexes
 

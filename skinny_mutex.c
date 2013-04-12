@@ -467,8 +467,16 @@ static int fat_mutex_lock(skinny_mutex_t *skinny, struct fat_mutex *fat)
 		fat->waiters++;
 
 		do {
-			int res = pthread_cond_wait(&fat->held_cond,
-						    &fat->mutex);
+			int res, old_state, old_state2;
+
+			/* skinny_mutex_lock is not a cancellation
+			   point, but pthread_cond_wait is, so we need
+			   to defer cancellation around it. */
+			assert(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,
+						       &old_state));
+			res = pthread_cond_wait(&fat->held_cond, &fat->mutex);
+			assert(!pthread_setcancelstate(old_state, &old_state2));
+
 			if (res) {
 				int res2;
 

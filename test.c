@@ -56,7 +56,6 @@ static void test_contention(void)
 	pthread_t threads[10];
 	int i;
 
-
 	assert(!skinny_mutex_init(&tc.mutex));
 	assert(!skinny_mutex_lock(&tc.mutex));
 	tc.held = 0;
@@ -75,6 +74,33 @@ static void test_contention(void)
 	assert(tc.count == 10);
 	assert(!skinny_mutex_unlock(&tc.mutex));
 	assert(!skinny_mutex_destroy(&tc.mutex));
+}
+
+static void *lock_cancellation_thread(void *v_mutex)
+{
+	skinny_mutex_t *mutex = v_mutex;
+	assert(!skinny_mutex_lock(mutex));
+	assert(!skinny_mutex_unlock(mutex));
+	return NULL;
+}
+
+/* skinny_mutex_lock is *not* a cancellation point. */
+static void test_lock_cancellation(void)
+{
+	skinny_mutex_t mutex;
+	pthread_t thread;
+	void *retval;
+
+	assert(!skinny_mutex_init(&mutex));
+	assert(!skinny_mutex_lock(&mutex));
+	assert(!pthread_create(&thread, NULL, lock_cancellation_thread,
+			       &mutex));
+	delay();
+	assert(!pthread_cancel(thread));
+	assert(!skinny_mutex_unlock(&mutex));
+	assert(!pthread_join(thread, &retval));
+	assert(!retval);
+	assert(!skinny_mutex_destroy(&mutex));
 }
 
 static void *trylock_thread(void *v_mutex)
@@ -189,6 +215,7 @@ int main(void)
 {
 	test_simple();
 	test_contention();
+	test_lock_cancellation();
 	test_trylock();
 	test_cond_wait();
 	test_cond_timedwait();
