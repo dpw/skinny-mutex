@@ -1,3 +1,5 @@
 *~
 test
-
+perf-pthreads
+perf-skinny
+perf-spinlock
