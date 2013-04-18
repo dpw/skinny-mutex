@@ -55,18 +55,35 @@ static int mutex_init(mutex_t *mutex)
 
 #endif
 
+struct test_results {
+	int reps;
+	long long start;
+	long long stop;
+};
+
+static long long now_usecs(void)
+{
+	struct timeval tv;
+	assert(!gettimeofday(&tv, NULL));
+	return (long long)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
 /* Simply acquiring and releasing a lock, without any contention. */
-static void lock_unlock(int reps)
+static void lock_unlock(struct test_results *res)
 {
 	mutex_t mutex;
 	int i;
 
 	assert(!mutex_init(&mutex));
 
-	for (i = 0; i < reps; i++) {
+	res->start = now_usecs();
+
+	for (i = res->reps; i--;) {
 		assert(!mutex_lock(&mutex));
 		assert(!mutex_unlock(&mutex));
 	}
+
+	res->stop = now_usecs();
 
 	assert(!mutex_destroy(&mutex));
 }
@@ -113,6 +130,8 @@ struct contention_thread_info {
 	struct contention_info *info;
 	pthread_mutex_t start_mutex;
 	int thread_index;
+	long long start;
+	long long stop;
 };
 
 static void *contention_thread(void *v_thread_info)
@@ -136,6 +155,8 @@ static void *contention_thread(void *v_thread_info)
 	assert(!pthread_mutex_lock(&thread_info->start_mutex));
 	assert(!pthread_mutex_unlock(&thread_info->start_mutex));
 
+	thread_info->start = now_usecs();
+
 	for (j = 1; j < reps; j++) {
 		int next = (i + 1) % CONTENTION_MUTEX_COUNT;
 		assert(!mutex_lock(&info->mutexes[next]));
@@ -143,11 +164,13 @@ static void *contention_thread(void *v_thread_info)
 		i = next;
 	}
 
+	thread_info->stop = now_usecs();
+
 	assert(!mutex_unlock(&info->mutexes[i]));
 	return NULL;
 }
 
-static void contention(int reps)
+static void contention(struct test_results *res)
 {
 	struct contention_info info;
 	struct contention_thread_info thread_infos[CONTENTION_THREAD_COUNT];
@@ -160,7 +183,7 @@ static void contention(int reps)
 	assert(!pthread_mutex_init(&info.ready_mutex, NULL));
 	assert(!pthread_cond_init(&info.ready_cond, NULL));
 	info.ready_count = 0;
-	info.thread_reps = reps / CONTENTION_THREAD_COUNT;
+	info.thread_reps = res->reps / CONTENTION_THREAD_COUNT;
 
 	for (i = 0; i < CONTENTION_THREAD_COUNT; i++) {
 		thread_infos[i].info = &info;
@@ -190,13 +213,15 @@ static void contention(int reps)
 
 	assert(!pthread_mutex_destroy(&info.ready_mutex));
 	assert(!pthread_cond_destroy(&info.ready_cond));
-}
 
-static long long now_usecs(void)
-{
-	struct timeval tv;
-	assert(!gettimeofday(&tv, NULL));
-	return (long long)tv.tv_sec * 1000000 + tv.tv_usec;
+	res->start = thread_infos[0].start;
+	res->stop = thread_infos[0].stop;
+	for (i = 1; i < CONTENTION_THREAD_COUNT; i++) {
+		if (thread_infos[i].start < res->start)
+			res->start = thread_infos[i].start;
+		if (thread_infos[i].stop > res->stop)
+			res->stop = thread_infos[i].stop;
+	}
 }
 
 static int cmp_long_long(const void *ap, const void *bp)
@@ -214,18 +239,21 @@ static int cmp_long_long(const void *ap, const void *bp)
 
 #define SETS 10
 
-static void measure(void (*test)(int), const char *name, int reps)
+static void measure(void (*test)(struct test_results *res),
+		    const char *name, int reps)
 {
+	struct test_results res;
 	long long times[SETS];
 	int i;
 
 	printf("Measuring %s: ", name);
 	fflush(stdout);
 
+	res.reps = reps;
+
 	for (i = 0; i < SETS; i++) {
-		long long start = now_usecs();
-		test(reps);
-		times[i] = now_usecs() - start;
+		test(&res);
+		times[i] = res.stop - res.start;
 	}
 
 	qsort(times, SETS, sizeof(long long), cmp_long_long);
@@ -241,3 +269,4 @@ int main(void)
 		100000);
 	return 0;
 }
+
