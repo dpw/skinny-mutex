@@ -110,16 +110,35 @@ static void *trylock_thread(void *v_mutex)
 	return NULL;
 }
 
+static void *trylock_contender_thread(void *v_mutex)
+{
+	skinny_mutex_t *mutex = v_mutex;
+	assert(!skinny_mutex_lock(mutex));
+	delay();
+	delay();
+	assert(!skinny_mutex_unlock(mutex));
+	return NULL;
+}
+
 static void test_trylock(void)
 {
 	skinny_mutex_t mutex;
-	pthread_t thread;
+	pthread_t thread1, thread2;
 
 	assert(!skinny_mutex_init(&mutex));
 	assert(!skinny_mutex_trylock(&mutex));
-	assert(!pthread_create(&thread, NULL, trylock_thread, &mutex));
-	assert(!pthread_join(thread, NULL));
+
+	assert(!pthread_create(&thread1, NULL, trylock_thread, &mutex));
+	assert(!pthread_join(thread1, NULL));
+
+	assert(!pthread_create(&thread1, NULL, trylock_contender_thread,
+			       &mutex));
+	delay();
+	assert(!pthread_create(&thread2, NULL, trylock_thread, &mutex));
+	assert(!pthread_join(thread2, NULL));
 	assert(!skinny_mutex_unlock(&mutex));
+	assert(!pthread_join(thread1, NULL));
+
 	assert(!skinny_mutex_destroy(&mutex));
 }
 

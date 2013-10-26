@@ -490,30 +490,19 @@ static int fat_mutex_lock(skinny_mutex_t *skinny, struct fat_mutex *fat)
 	return pthread_mutex_unlock(&fat->mutex);
 }
 
-/* Try to acquire a skinny_mutex that is already held.
- *
- * Returns 0 on success, a positive error code, or <0 if the
- * skinny_mutex value changed so that the operation should be retried.
- */
-static int skinny_mutex_contend(skinny_mutex_t *skinny, struct common *head)
-{
-	struct fat_mutex *fat;
-	int res = fat_mutex_get(skinny, head, &fat);
-	if (!res) {
-		fat->refcount++;
-		res = fat_mutex_lock(skinny, fat);
-	}
-
-	return res;
-}
-
 /* Called from skinny_mutex_lock when the fast path fails. */
 int skinny_mutex_lock_slow(skinny_mutex_t *skinny)
 {
 	for (;;) {
 		struct common *head = skinny->val;
 		if (head) {
-			int res = skinny_mutex_contend(skinny, head);
+			struct fat_mutex *fat;
+			int res = fat_mutex_get(skinny, head, &fat);
+			if (!res) {
+				fat->refcount++;
+				res = fat_mutex_lock(skinny, fat);
+			}
+
 			if (res >= 0)
 				return res;
 
@@ -532,7 +521,8 @@ int skinny_mutex_trylock(skinny_mutex_t *skinny)
 {
 	for (;;) {
 		struct common *head = skinny->val;
-		int res;
+		struct fat_mutex *fat;
+		int res, res2;
 
 		switch ((uintptr_t)head) {
 		case 0:
@@ -545,12 +535,26 @@ int skinny_mutex_trylock(skinny_mutex_t *skinny)
 			return EBUSY;
 
 		default:
-			res = skinny_mutex_contend(skinny, head);
-			if (res >= 0)
+			res = fat_mutex_peg(skinny, head, &fat);
+			if (res > 0)
 				return res;
+			else if (res < 0)
+				/* skinny_mutex value changed under us, try
+				   again. */
+				break;
 
-			/* skinny_mutex value changed under us, try
-			   again. */
+			res = EBUSY;
+			if (!fat->held) {
+				fat->held = 1;
+				fat->refcount++;
+				res = 0;
+			}
+
+			res2 = pthread_mutex_unlock(&fat->mutex);
+			if (res2)
+				return res2;
+
+			return res;
 		}
 	}
 }
