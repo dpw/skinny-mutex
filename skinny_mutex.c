@@ -24,15 +24,9 @@
  */
 static void *atomic_xchg(void **ptr, void *new)
 {
-#if defined(__i386__)
+#if defined(__i386__) || defined(__x86_64__)
 	void *old = new;
-	__asm__ volatile ("xchgl %0, %1\n" /* lock prefix is implicit */
-		      : "+r" (old), "+m" (*ptr)
-		      : : "memory", "cc");
-	return old;
-#elif defined(__x86_64__)
-	void *old = new;
-	__asm__ volatile ("xchgq %0, %1\n" /* lock prefix is implicit */
+	__asm__ volatile ("xchg %0, %1\n" /* lock prefix is implicit */
 		      : "+r" (old), "+m" (*ptr)
 		      : : "memory", "cc");
 	return old;
