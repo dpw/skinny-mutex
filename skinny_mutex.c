@@ -92,7 +92,7 @@ struct fat_mutex {
 
 	/* How many threads are waiting to acquire the associated
 	 * skinny_mutex. */
-	unsigned long waiters;
+	long waiters;
 
 	/* References that prevent the fat_mutex being freed.  This
 	 * includes:
@@ -114,7 +114,7 @@ struct fat_mutex {
 	 * - References from thread waiting on condition variables
 	 * associated with the skinny_mutex.
 	 */
-	unsigned long refcount;
+	long refcount;
 
 	/* The pthreads mutex guarding the other fields. */
 	pthread_mutex_t mutex;
