@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -62,6 +63,26 @@ static int atomic_sub_and_test(uint8_t *ptr, uint8_t x)
 #endif
 }
 
+/* The function says how to behave when we encounter an error while
+ * recovering from another error.
+ *
+ * It's not clear twhat the right thing to do in general is.  Here we
+ * assume it is better to blow up than to discard an error code (which
+ * might lead to blowing up later on anyway).
+ */
+static int recover(int res1, int res2)
+{
+	if (res2 == 0)
+		return res1;
+
+	if (res1 == 0)
+		return res2;
+
+	fprintf(stderr,
+		"skinny_mutex: got error %d while recovering from %d\n",
+		res2, res1);
+	abort();
+}
 
 /* The common header for the fat_mutex and peg structs */
 struct common {
@@ -472,14 +493,9 @@ static int fat_mutex_lock(skinny_mutex_t *skinny, struct fat_mutex *fat)
 			assert(!pthread_setcancelstate(old_state, &old_state2));
 
 			if (res) {
-				int res2;
-
 				fat->waiters--;
-				res2 = fat_mutex_release(skinny, fat);
-				if (res2)
-					return res2;
-
-				return res;
+				return recover(res,
+					       fat_mutex_release(skinny, fat));
 			}
 		} while (fat->held);
 
@@ -522,7 +538,7 @@ int skinny_mutex_trylock(skinny_mutex_t *skinny)
 	for (;;) {
 		struct common *head = skinny->val;
 		struct fat_mutex *fat;
-		int res, res2;
+		int res;
 
 		switch ((uintptr_t)head) {
 		case 0:
@@ -550,11 +566,8 @@ int skinny_mutex_trylock(skinny_mutex_t *skinny)
 				res = 0;
 			}
 
-			res2 = pthread_mutex_unlock(&fat->mutex);
-			if (res2)
-				return res2;
-
-			return res;
+			return recover(res,
+				       pthread_mutex_unlock(&fat->mutex));
 		}
 	}
 }
@@ -582,7 +595,6 @@ int skinny_mutex_unlock_slow(skinny_mutex_t *skinny)
 {
 	struct fat_mutex *fat;
 	int res = fat_mutex_get_held(skinny, &fat);
-	int res2;
 
 	if (res)
 		return res;
@@ -593,8 +605,7 @@ int skinny_mutex_unlock_slow(skinny_mutex_t *skinny)
 		/* Wake a single waiter. */
 		res = pthread_cond_signal(&fat->held_cond);
 
-	res2 = fat_mutex_release(skinny, fat);
-	return !res2 ? res : res2;
+	return recover(res, fat_mutex_release(skinny, fat));
 }
 
 /* Thread cancallation cleanup handler when waiting for the condition
@@ -641,10 +652,8 @@ int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
 
 	pthread_cleanup_pop(0);
 
-	if (!res || res == ETIMEDOUT) {
-		int res2 = fat_mutex_lock(skinny, fat);
-		return res2 ? res2 : res;
-	}
+	if (!res || res == ETIMEDOUT)
+		return recover(res, fat_mutex_lock(skinny, fat));
 
 	/* The pthreads spec says that errors are reported as
 	 * though the mutex was not dropped. */
