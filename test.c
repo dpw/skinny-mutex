@@ -217,6 +217,11 @@ static void test_cond_wait_cancellation(skinny_mutex_t *mutex)
 	assert(!pthread_cond_destroy(&tcw.cond));
 }
 
+static void test_unlock_not_held(skinny_mutex_t *mutex)
+{
+	assert(skinny_mutex_unlock(mutex) == EPERM);
+}
+
 struct do_test {
 	skinny_mutex_t mutex;
 	pthread_cond_t cond;
@@ -239,7 +244,6 @@ static void *do_test_cond_thread(void *v_dt)
 
 	return NULL;
 }
-
 
 static void do_test(void (*f)(skinny_mutex_t *m))
 {
@@ -288,6 +292,7 @@ int main(void)
 	do_test(test_cond_wait);
 	do_test(test_cond_timedwait);
 	do_test(test_cond_wait_cancellation);
+	do_test(test_unlock_not_held);
 
 	return 0;
 }

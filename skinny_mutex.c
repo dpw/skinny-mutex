@@ -573,7 +573,7 @@ int skinny_mutex_trylock(skinny_mutex_t *skinny)
 }
 
 /* Get and lock the fat_mutex associated with a skinny_mutex, when
- * this thread already holds the mutex. */
+ * this thread is expected to already hold the mutex. */
 static int fat_mutex_get_held(skinny_mutex_t *skinny, struct fat_mutex **fatp)
 {
 	for (;;) {
@@ -583,9 +583,18 @@ static int fat_mutex_get_held(skinny_mutex_t *skinny, struct fat_mutex **fatp)
 			return EPERM;
 
 		res = fat_mutex_get(skinny, head, fatp);
-		if (res == 0)
-			return (*fatp)->held ? 0 : EPERM;
-		else if (res >= 0)
+		if (res == 0) {
+			if ((*fatp)->held)
+				return 0;
+
+			res = pthread_mutex_unlock(&(*fatp)->mutex);
+			if (res)
+				return res;
+
+			return EPERM;
+		}
+
+		if (res >= 0)
 			return res;
 	}
 }
