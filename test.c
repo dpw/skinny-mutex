@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 
+#include <stdlib.h>
 #include <time.h>
 #include <assert.h>
 
@@ -222,8 +223,73 @@ static void test_unlock_not_held(skinny_mutex_t *mutex)
 	assert(skinny_mutex_unlock(mutex) == EPERM);
 }
 
+static void *test_transfer_thread(void *v_mutexes)
+{
+	skinny_mutex_t *mutexes = v_mutexes;
+	int res;
+
+	assert(!skinny_mutex_lock(&mutexes[0]));
+	res = skinny_mutex_transfer(&mutexes[0], &mutexes[1]);
+
+	if (res == EAGAIN) {
+		assert(!skinny_mutex_unlock(&mutexes[0]));
+	}
+	else {
+		assert(!res);
+		assert(!skinny_mutex_unlock(&mutexes[1]));
+	}
+
+	return (void *)(size_t)res;
+}
+
+static void test_transfer(skinny_mutex_t *mutexes)
+{
+	pthread_t thread;
+	void *retval;
+
+	/* Check EPERM result */
+	assert(skinny_mutex_transfer(&mutexes[0], &mutexes[1]) == EPERM);
+
+	/* Test the case where the transfer doesn't need to wait */
+	assert(!skinny_mutex_lock(&mutexes[0]));
+	assert(!skinny_mutex_transfer(&mutexes[0], &mutexes[1]));
+	assert(!skinny_mutex_unlock(&mutexes[1]));
+
+	/* Check that A was unlocked. */
+	assert(!skinny_mutex_trylock(&mutexes[0]));
+	assert(!skinny_mutex_unlock(&mutexes[0]));
+
+	/* Make a transfer wait, but then allow it to complete. */
+	assert(!skinny_mutex_lock(&mutexes[1]));
+	assert(!pthread_create(&thread, NULL, test_transfer_thread, mutexes));
+	delay();
+	assert(!skinny_mutex_unlock(&mutexes[1]));
+	assert(!pthread_join(thread, &retval));
+	assert(retval == (void *)0);
+
+	/* Make a transfer wait, and then veto it. */
+	assert(!skinny_mutex_lock(&mutexes[1]));
+	assert(!pthread_create(&thread, NULL, test_transfer_thread, mutexes));
+	delay();
+	assert(!skinny_mutex_veto_transfer(&mutexes[1]));
+	assert(!pthread_join(thread, &retval));
+	assert(retval == (void *)EAGAIN);
+	assert(!skinny_mutex_unlock(&mutexes[1]));
+}
+
+static void test_transfer_veto(skinny_mutex_t *mutex)
+{
+	/* Veto on a mutex with no transfers occuring */
+	assert(!skinny_mutex_lock(mutex));
+	assert(!skinny_mutex_veto_transfer(mutex));
+	assert(!skinny_mutex_unlock(mutex));
+
+	/* Veto on an unheld mutex gives EPERM. */
+	assert(skinny_mutex_veto_transfer(mutex) == EPERM);
+}
+
 struct do_test {
-	skinny_mutex_t mutex;
+	skinny_mutex_t *mutex;
 	pthread_cond_t cond;
 	int phase;
 };
@@ -232,53 +298,79 @@ static void *do_test_cond_thread(void *v_dt)
 {
 	struct do_test *dt = v_dt;
 
-	assert(!skinny_mutex_lock(&dt->mutex));
+	assert(!skinny_mutex_lock(dt->mutex));
 	dt->phase = 1;
 	assert(!pthread_cond_signal(&dt->cond));
 
 	do {
-		assert(!skinny_mutex_cond_wait(&dt->cond, &dt->mutex));
+		assert(!skinny_mutex_cond_wait(&dt->cond, dt->mutex));
 	} while (dt->phase != 2);
 
-	assert(!skinny_mutex_unlock(&dt->mutex));
+	assert(!skinny_mutex_unlock(dt->mutex));
 
 	return NULL;
 }
 
-static void do_test(void (*f)(skinny_mutex_t *m))
+static void do_test_aux(int i, skinny_mutex_t *mutexes,
+			void (*f)(skinny_mutex_t *m))
 {
 	struct do_test dt;
 	pthread_t thread;
 
+	if (i == 0) {
+		f(mutexes);
+		return;
+	}
+
+	i--;
+
 	/* First do the test with a fresh mutex. */
-	assert(!skinny_mutex_init(&dt.mutex));
-	f(&dt.mutex);
-	assert(!skinny_mutex_destroy(&dt.mutex));
+	assert(!skinny_mutex_init(mutexes + i));
+	do_test_aux(i, mutexes, f);
+	assert(!skinny_mutex_destroy(mutexes + i));
 
 	/* Do the test with a thread waiting on a cond var associated
 	   with the mutex.  This ensures that the skinny mutex has a
 	   fat mutex during the text. */
-	assert(!skinny_mutex_init(&dt.mutex));
+	assert(!skinny_mutex_init(mutexes + i));
+
+	dt.mutex = mutexes + i;
 	assert(!pthread_cond_init(&dt.cond, NULL));
 	dt.phase = 0;
+
 	assert(!pthread_create(&thread, NULL, do_test_cond_thread, &dt));
 
-	assert(!skinny_mutex_lock(&dt.mutex));
+	/* Wait until the thread is waiting on the cond var */
+	assert(!skinny_mutex_lock(mutexes + i));
 	while (dt.phase != 1) {
-		assert(!skinny_mutex_cond_wait(&dt.cond, &dt.mutex));
+		assert(!skinny_mutex_cond_wait(&dt.cond, mutexes + i));
 	};
-	assert(!skinny_mutex_unlock(&dt.mutex));
+	assert(!skinny_mutex_unlock(mutexes + i));
 
-	f(&dt.mutex);
+	do_test_aux(i, mutexes, f);
 
-	assert(!skinny_mutex_lock(&dt.mutex));
+	assert(!skinny_mutex_lock(mutexes + i));
 	dt.phase = 2;
 	assert(!pthread_cond_signal(&dt.cond));
-	assert(!skinny_mutex_unlock(&dt.mutex));
+	assert(!skinny_mutex_unlock(mutexes + i));
 
 	assert(!pthread_join(thread, NULL));
-	assert(!skinny_mutex_destroy(&dt.mutex));
+	assert(!skinny_mutex_destroy(mutexes + i));
 	assert(!pthread_cond_destroy(&dt.cond));
+}
+
+static void do_test(void (*f)(skinny_mutex_t *m))
+{
+	skinny_mutex_t mutex;
+	do_test_aux(1, &mutex, f);
+}
+
+static void do_test_multi(void (*f)(skinny_mutex_t *m), int n)
+{
+	skinny_mutex_t *mutexes = malloc(n * sizeof *mutexes);
+	assert(mutexes);
+	do_test_aux(n, mutexes, f);
+	free(mutexes);
 }
 
 int main(void)
@@ -293,6 +385,8 @@ int main(void)
 	do_test(test_cond_timedwait);
 	do_test(test_cond_wait_cancellation);
 	do_test(test_unlock_not_held);
+	do_test_multi(test_transfer, 2);
+	do_test(test_transfer_veto);
 
 	return 0;
 }

@@ -142,7 +142,11 @@ struct fat_mutex {
 
 	/* Conv var signalled when the mutex is released and there are
 	   waiters. */
-	pthread_cond_t held_cond;
+	pthread_cond_t cond;
+
+	/* Transfer generation.  XXX */
+	long transfer_gen;
+	long transfers;
 };
 
 /*
@@ -386,12 +390,14 @@ static int skinny_mutex_promote(skinny_mutex_t *skinny, void *head,
 	   for the pseudo-reference from the holding thread. */
 	fat->refcount = fat->held;
 	fat->waiters = 0;
+	fat->transfer_gen = 0;
+	fat->transfers = 0;
 
 	res = pthread_mutex_init(&fat->mutex, NULL);
 	if (res)
 		goto err_mutex_init;
 
-	res = pthread_cond_init(&fat->held_cond, NULL);
+	res = pthread_cond_init(&fat->cond, NULL);
 	if (res)
 		goto err_cond_init;
 
@@ -407,7 +413,7 @@ static int skinny_mutex_promote(skinny_mutex_t *skinny, void *head,
 	res = -1;
 	pthread_mutex_unlock(&fat->mutex);
  err_mutex_lock:
-	pthread_cond_destroy(&fat->held_cond);
+	pthread_cond_destroy(&fat->cond);
  err_cond_init:
 	pthread_mutex_destroy(&fat->mutex);
  err_mutex_init:
@@ -443,8 +449,6 @@ static int fat_mutex_release(skinny_mutex_t *skinny, struct fat_mutex *fat)
 {
 	int keep, res;
 
-	assert(!fat->held);
-
 	/* If the decremented refcount reaches zero, then we know
 	   there are no secondary peg chains or other threads pinning
 	   the fat_mutex.  And if the skinny_mutex points to the
@@ -461,7 +465,7 @@ static int fat_mutex_release(skinny_mutex_t *skinny, struct fat_mutex *fat)
 	if (res)
 		return res;
 
-	res = pthread_cond_destroy(&fat->held_cond);
+	res = pthread_cond_destroy(&fat->cond);
 	if (res)
 		return res;
 
@@ -489,7 +493,7 @@ static int fat_mutex_lock(skinny_mutex_t *skinny, struct fat_mutex *fat)
 			   to defer cancellation around it. */
 			assert(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,
 						       &old_state));
-			res = pthread_cond_wait(&fat->held_cond, &fat->mutex);
+			res = pthread_cond_wait(&fat->cond, &fat->mutex);
 			assert(!pthread_setcancelstate(old_state, &old_state2));
 
 			if (res) {
@@ -612,7 +616,7 @@ int skinny_mutex_unlock_slow(skinny_mutex_t *skinny)
 	res = 0;
 	if (fat->waiters)
 		/* Wake a single waiter. */
-		res = pthread_cond_signal(&fat->held_cond);
+		res = pthread_cond_signal(&fat->cond);
 
 	return recover(res, fat_mutex_release(skinny, fat));
 }
@@ -639,7 +643,7 @@ int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
 
 	/* We will release the lock, so wake a waiter */
 	if (fat->waiters) {
-		res = pthread_cond_signal(&fat->held_cond);
+		res = pthread_cond_signal(&fat->cond);
 		if (res) {
 			pthread_mutex_unlock(&fat->mutex);
 			return res;
@@ -675,4 +679,134 @@ int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
 int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *skinny)
 {
 	return skinny_mutex_cond_timedwait(cond, skinny, NULL);
+}
+
+int skinny_mutex_transfer(skinny_mutex_t *a, skinny_mutex_t *b)
+{
+	struct fat_mutex *fat_b;
+	int res;
+	long transfer_gen;
+
+	for (;;) {
+		struct common *b_head = b->val;
+
+		if (!b_head) {
+			/* b is neither held nor contended, the simple
+			   case. */
+			if (!cas(&b->val, b_head, (void *)1))
+				/* skinny mutex value changed under us, try
+				   again. */
+				continue;
+
+			res = skinny_mutex_unlock(a);
+			if (res)
+				/* if we fail to unlock a, we need to
+				   unlock b to recover to the original
+				   state. */
+				return recover(res, skinny_mutex_unlock(b));
+
+			/* All done.  That was easy. */
+			return 0;
+		}
+
+		/* b is held or contended, we might have work to do. */
+		res = fat_mutex_get(b, b_head, &fat_b);
+		if (!res)
+			break;
+
+		if (res >= 0)
+			return res;
+	}
+
+	fat_b->refcount++;
+	transfer_gen = fat_b->transfer_gen;
+
+	/* We are going to wait to acquire b, so we need to unlock
+	   a. Try the easy way first. */
+	if (!cas(&a->val, (void *)1, (void *)0)) {
+		/* We can't acquire a's fat lock while holding b's fat
+		   lock, because that would risk deadlock.  So we have
+		   to drop b first.  We have bumped the refcount, so
+		   it won't go away. */
+		pthread_mutex_unlock(&fat_b->mutex);
+		res = skinny_mutex_unlock_slow(a);
+		pthread_mutex_lock(&fat_b->mutex);
+		if (res)
+			return recover(res, fat_mutex_release(b, fat_b));
+	}
+
+	fat_b->transfers++;
+	fat_b->waiters++;
+
+	for (;;) {
+		int old_state, old_state2;
+
+		if (!fat_b->held) {
+			/* We can acquire the lock */
+			fat_b->transfers--;
+			fat_b->waiters--;
+			fat_b->held = 1;
+			return pthread_mutex_unlock(&fat_b->mutex);
+		}
+
+		if (fat_b->transfer_gen != transfer_gen) {
+			/* There was a veto_transfer */
+			res = EAGAIN;
+			break;
+		}
+
+		/* Not a cancellation point, but pthread_cond_wait is,
+		   so we need to defer cancellation around it. */
+		assert(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,
+					       &old_state));
+		res = pthread_cond_wait(&fat_b->cond, &fat_b->mutex);
+		assert(!pthread_setcancelstate(old_state, &old_state2));
+
+		if (res)
+			break;
+	}
+
+	fat_b->transfers--;
+	fat_b->waiters--;
+	res = recover(res, fat_mutex_release(b, fat_b));
+	return recover(res, skinny_mutex_lock(a));
+}
+
+int skinny_mutex_veto_transfer(skinny_mutex_t *skinny)
+{
+	int res;
+	struct fat_mutex *fat;
+
+	for (;;) {
+		struct common *head = skinny->val;
+		if (head == (void *)1)
+			/* Mutex held, but no fat mutex, so there
+			   can't be any waiting transfers. */
+			return 0;
+
+		if (head == (void *)0)
+			/* Mutex not held */
+			return EPERM;
+
+		res = fat_mutex_peg(skinny, head, &fat);
+		if (res == 0)
+			break;
+
+		if (res > 0)
+			return res;
+
+		/* skinny mutex value changed under us, try again. */
+	}
+
+	res = EPERM;
+
+	if (fat->held) {
+		/* notify any waiting transfers */
+		res = 0;
+		fat->transfer_gen++;
+		if (fat->transfers)
+			res = pthread_cond_broadcast(&fat->cond);
+	}
+
+	return recover(res, pthread_mutex_unlock(&fat->mutex));
 }

@@ -54,6 +54,9 @@ int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *m);
 int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *m,
 				const struct timespec *abstime);
 
+int skinny_mutex_transfer(skinny_mutex_t *a, skinny_mutex_t *b);
+int skinny_mutex_veto_transfer(skinny_mutex_t *m);
+
 #ifdef __cplusplus
 }
 #endif
