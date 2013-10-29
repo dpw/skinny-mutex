@@ -1,5 +1,9 @@
 # Low-memory-footprint mutexes for pthreads
 
+*This is an experimental branch for the `skinny_mutex_transfer`
+feature.  It will likely get rebased.  Look at the master branch for
+the stable code.*
+
 The main kind of lock provided by the pthreads API is the mutex
 (`pthread_mutex_t`).  These have a lot of features (enabled though the
 attributes set in `pthread_mutexattr_t`), integrate with condition
