@@ -1,4 +1,4 @@
-CFLAGS=-Wall -g -O6
+CFLAGS=-Wall -Wextra -g -O6
 
 .PHONY: all
 all:: test perf-pthreads perf-skinny perf-spinlock
