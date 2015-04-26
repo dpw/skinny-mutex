@@ -97,7 +97,7 @@ struct common {
  * held.
  *
  * When a lock becomes contended - when a thread tries to lock a
- * skinny_mutex that is alreay held - we fall back to standard
+ * skinny_mutex that is already held - we fall back to standard
  * pthreads synchronization primitives (so that the thread can block
  * and be woken again when it has a chance to acquire the lock).  The
  * fat_mutex struct holds all the state necessary to handle contention
@@ -122,7 +122,7 @@ struct fat_mutex {
 	 * mutex.
 	 *
 	 * - References from pegs (see below) not on the primary chain
-	 * (qnother way of looking at it is that we do include the
+	 * (another way of looking at it is that we do include the
 	 * reference from the primary chain, which could be the one
 	 * from the skinny_mutex, but we offset the refcount value by
 	 * -1, so a refcount of 0 means we only have the primary
@@ -132,7 +132,7 @@ struct fat_mutex {
          * (this might not correspond to an explicit reference, but
          * keeps the fat_mutex pinned while the mutex is held).
 	 *
-	 * - References from thread waiting on condition variables
+	 * - References from threads waiting on condition variables
 	 * associated with the skinny_mutex.
 	 */
 	long refcount;
@@ -148,31 +148,35 @@ struct fat_mutex {
 /*
  * If the skinny_mutex points to a fat_mutex, a thread cannot simply
  * obtain the pointer and dereference it, as another thread might free
- * the fat_mutex.  We need to track whether other threads are
- * intending to access the fat_mutex, to delay freeing it if so.
+ * the fat_mutex between those two points.  There needs to be some way
+ * for a thread to communicate its intent to access the fat_mutex.
  *
- * Many lock-free algoithms solve, this problem using hazard pointers.
- * But hazard pointers require tracking the set of threads involved,
- * and deallocations must be batched and implemented with a data
- * structure to allow efficient comparison of a candidate pointer with
- * the set of hazard pointers.  All this requires a substantial amount
- * of code.
+ * Many lock-free algoithms solve this problem using hazard pointers.
+ * But hazard pointers require tracking the set of all threads
+ * involved.  Furthermore, for efficiency, hazard pointer
+ * implementations batch deallocations, and process a batch using a
+ * data structure that allows efficient comparison of a candidate
+ * pointer with the set of hazard pointers.  Implementing all this
+ * involves a substantial amount of code.
  *
- * We use a simpler approach: Pegging.  (This approach is slightly
- * more expensive that hazard pointers on a per-access basis, but we
- * only access when contention or other much higher costs are
- * involved.)
+ * We use a simpler approach: Pegging.  This approach has higher
+ * per-access costs than hazard pointers, but we only access the
+ * fat_mutex when other significant costs are involved (e.g. blocking
+ * the thread on a pthreds mutex), so the cost of this part is likely
+ * to be marginal.
 
  * A thread indicates its intent to access the fat_mutex by allocating
  * a peg struct and storing a pointer to it into the skinny_mutex,
  * replacing the pointer to the fat_mutex (see fat_mutex_peg).  The
- * fat_mutex is only freed if the skinny_mutex points directly to it,
- * so the peg prevents it being freed (see fat_mutex_release).
+ * skinny_mutex is updated with CAS so that installing a peg is
+ * atomic.  A fat_mutex can only be freed if the skinny_mutex points
+ * directly to it, so the presence of the peg prevents it being freed,
+ * hence the name (see fat_mutex_release).
  *
  * The peg struct has a "next" pointer in it, pointing to the previous
- * value of the skinny_mutex (skinny_mutex is updated with CAS so that
- * installing a peg is atomic).  So chains of pegs can be built up,
- * starting with the skinny_mutex, followed by zero or more pegs, and
+ * value of the skinny_mutex.  This might be a fat_mutex, but it an
+ * also be another peg.  So chains of pegs can be built up, starting
+ * with the skinny_mutex, followed by zero or more pegs, and
  * terminating with the fat_mutex, e.g.:
  *
  * +--------------+   +--------+   +--------+   +-----------+
@@ -182,13 +186,14 @@ struct fat_mutex {
  * +--------------+   |   ...  |   |   ...  |   +-----------+
  *                    +--------+   +--------+
  *
- * During the process of releasing a peg, the skinny_mutex is set to
- * point to the fat_mutex again, possibly leaving chains which of pegs
- * which do not originate at the skinny_mutex (these accounted for in
- * the fat_mutex's refcount, so the pegs on these chains still prevent
- * the fat_mutex being freed).  We refer to the chain connecting the
- * skinny_mutex to the fat_mutex as the primary chain, and the others
- * as secondary chains, e.g.:
+ * During the process of releasing a peg (in the second half of
+ * fat_mutex_peg), the skinny_mutex is set to point to the fat_mutex
+ * again, possibly leaving chains which of pegs which do not originate
+ * at the skinny_mutex (these are accounted for in the fat_mutex's
+ * refcount, so the pegs on these chains still prevent the fat_mutex
+ * being freed).  We refer to the chain connecting the skinny_mutex to
+ * the fat_mutex as the primary chain, and the others as secondary
+ * chains, e.g.:
  *
  *                    +--------+   +--------+
  *                    |   peg  |   |   peg  |
@@ -282,17 +287,16 @@ static int fat_mutex_peg(skinny_mutex_t *skinny, struct common *p,
 	res = pthread_mutex_lock(&fat->mutex);
 
 	/* The fat_mutex is locked, and we know it won't go away while
-	 * we hold is lock.  So we can release our peg.
+	 * we hold its lock.  So we can release our peg.
 	 *
 	 * To do this, we set the skinny_mutex to point to the
-	 * fat_mutex, eliminating the primary chain.  As this thread's
-	 * peg might not have been the only on of the primary chain,
-	 * this might mean we create a new secondary chain
-	 * (incrementing the fat_mutex's refcoutn accordingly).
-	 * Handling the various cases correctly hinges on the
-	 * refcounts.  By the end of this function, the fat_mutex
-	 * refcount can be incremented, decremented, or returned to
-	 * its original value. */
+	 * fat_mutex, turning the primary chain into a secondary
+	 * chain.  Note that we don't know whether this thread's peg
+	 * is still on the primary chain when we do this.  Handling
+	 * the various cases correctly hinges on the refcounts.  By
+	 * the end of this function, the fat_mutex refcount can be
+	 * incremented, decremented, or returned to its original
+	 * value. */
 	p = atomic_xchg(&skinny->val, fat);
 
 	/* By setting the skinny_mutex to point to the fat_mutex, we
