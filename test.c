@@ -222,7 +222,16 @@ static void test_unlock_not_held(skinny_mutex_t *mutex)
 	assert(skinny_mutex_unlock(mutex) == EPERM);
 }
 
-struct do_test {
+static void do_test_simple(void (*f)(skinny_mutex_t *m))
+{
+	skinny_mutex_t mutex;
+
+	assert(!skinny_mutex_init(&mutex));
+	f(&mutex);
+	assert(!skinny_mutex_destroy(&mutex));
+}
+
+struct do_test_cond {
 	skinny_mutex_t mutex;
 	pthread_cond_t cond;
 	int phase;
@@ -230,7 +239,7 @@ struct do_test {
 
 static void *do_test_cond_thread(void *v_dt)
 {
-	struct do_test *dt = v_dt;
+	struct do_test_cond *dt = v_dt;
 
 	assert(!skinny_mutex_lock(&dt->mutex));
 	dt->phase = 1;
@@ -245,19 +254,14 @@ static void *do_test_cond_thread(void *v_dt)
 	return NULL;
 }
 
-static void do_test(void (*f)(skinny_mutex_t *m))
+/* Run the test with a thread waiting on a cond var associated with the
+   mutex.  This ensures that the skinny mutex has a fat mutex during
+   the text. */
+static void do_test_cond_wait(void (*f)(skinny_mutex_t *m))
 {
-	struct do_test dt;
+	struct do_test_cond dt;
 	pthread_t thread;
 
-	/* First do the test with a fresh mutex. */
-	assert(!skinny_mutex_init(&dt.mutex));
-	f(&dt.mutex);
-	assert(!skinny_mutex_destroy(&dt.mutex));
-
-	/* Do the test with a thread waiting on a cond var associated
-	   with the mutex.  This ensures that the skinny mutex has a
-	   fat mutex during the text. */
 	assert(!skinny_mutex_init(&dt.mutex));
 	assert(!pthread_cond_init(&dt.cond, NULL));
 	dt.phase = 0;
@@ -281,18 +285,66 @@ static void do_test(void (*f)(skinny_mutex_t *m))
 	assert(!pthread_cond_destroy(&dt.cond));
 }
 
+static void *do_test_hammer_thread(void *v_m)
+{
+	skinny_mutex_t *m = v_m;
+
+	for (;;) {
+		assert(!skinny_mutex_lock(m));
+		assert(!skinny_mutex_unlock(m));
+		pthread_testcancel();
+	}
+
+	return NULL;
+}
+
+/* Run the test with a bunch of other threads hammering on the
+   mutex. */
+static void do_test_hammer(void (*f)(skinny_mutex_t *m))
+{
+	skinny_mutex_t mutex;
+	pthread_t threads[10];
+	int i;
+
+	assert(!skinny_mutex_init(&mutex));
+
+	for (i = 0; i < 10; i++)
+		assert(!pthread_create(&threads[i], NULL,
+				       do_test_hammer_thread, &mutex));
+
+	delay();
+	f(&mutex);
+
+	for (i = 0; i < 10; i++) {
+		void *retval;
+		assert(!pthread_cancel(threads[i]));
+		assert(!pthread_join(threads[i], &retval));
+		assert(retval == PTHREAD_CANCELED);
+	}
+
+	assert(!skinny_mutex_destroy(&mutex));
+}
+
+static void do_test(void (*f)(skinny_mutex_t *m), int hammer)
+{
+	do_test_simple(f);
+	do_test_cond_wait(f);
+	if (hammer)
+		do_test_hammer(f);
+}
+
 int main(void)
 {
 	test_static_mutex();
 
-	do_test(test_lock_unlock);
-	do_test(test_contention);
-	do_test(test_lock_cancellation);
-	do_test(test_trylock);
-	do_test(test_cond_wait);
-	do_test(test_cond_timedwait);
-	do_test(test_cond_wait_cancellation);
-	do_test(test_unlock_not_held);
+	do_test(test_lock_unlock, 1);
+	do_test(test_contention, 1);
+	do_test(test_lock_cancellation, 1);
+	do_test(test_trylock, 0);
+	do_test(test_cond_wait, 1);
+	do_test(test_cond_timedwait, 1);
+	do_test(test_cond_wait_cancellation, 1);
+	do_test(test_unlock_not_held, 1);
 
 	return 0;
 }
