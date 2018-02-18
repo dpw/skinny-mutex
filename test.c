@@ -141,15 +141,23 @@ struct test_cond_wait {
 	int flag;
 };
 
+static void test_cond_wait_cleanup(void *v_tcw)
+{
+	struct test_cond_wait *tcw = v_tcw;
+	assert(!skinny_mutex_unlock(tcw->mutex));
+}
+
 static void *test_cond_wait_thread(void *v_tcw)
 {
 	struct test_cond_wait *tcw = v_tcw;
 
 	assert(!skinny_mutex_lock(tcw->mutex));
+	pthread_cleanup_push(test_cond_wait_cleanup, tcw);
+
 	while (!tcw->flag)
 		assert(!skinny_mutex_cond_wait(&tcw->cond, tcw->mutex));
-	assert(!skinny_mutex_unlock(tcw->mutex));
 
+	pthread_cleanup_pop(1);
 	return NULL;
 }
 
@@ -344,7 +352,7 @@ int main(void)
 	do_test(test_cond_wait, 1);
 	do_test(test_cond_timedwait, 1);
 	do_test(test_cond_wait_cancellation, 1);
-	do_test(test_unlock_not_held, 1);
+	do_test(test_unlock_not_held, 0);
 
 	return 0;
 }

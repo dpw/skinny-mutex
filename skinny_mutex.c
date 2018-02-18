@@ -623,31 +623,36 @@ int skinny_mutex_unlock_slow(skinny_mutex_t *skinny)
 	return recover(res, fat_mutex_release(skinny, fat));
 }
 
+struct cond_wait_cleanup {
+	skinny_mutex_t *skinny;
+	struct fat_mutex *fat;
+	int lock_res;
+};
+
 /* Thread cancallation cleanup handler when waiting for the condition
    variable below. */
-static void cond_wait_cleanup(void *v_skinny)
+static void cond_wait_cleanup(void *v_c)
 {
-	skinny_mutex_t *skinny = v_skinny;
+	struct cond_wait_cleanup *c = v_c;
 
-	/* Cancellation of pthread_cond_wait re-acquires fat->mutex,
-	 * and we have it pinned, so we can access the fat mutex
-	 * directly from the skinny mutex for once. */
-	assert(!fat_mutex_release(skinny, skinny->val));
+	/* Cancellation of pthread_cond_wait should re-acquire the
+	   mutex. */
+	c->lock_res = fat_mutex_lock(c->skinny, c->fat);
 }
 
 int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
 				const struct timespec *abstime)
 {
-	struct fat_mutex *fat;
-	int res = fat_mutex_get_held(skinny, &fat);
+	struct cond_wait_cleanup c;
+	int res = fat_mutex_get_held(skinny, &c.fat);
 	if (res)
 		return res;
 
 	/* We will release the lock, so wake a waiter */
-	if (fat->waiters) {
-		res = pthread_cond_signal(&fat->held_cond);
+	if (c.fat->waiters) {
+		res = pthread_cond_signal(&c.fat->held_cond);
 		if (res) {
-			pthread_mutex_unlock(&fat->mutex);
+			pthread_mutex_unlock(&c.fat->mutex);
 			return res;
 		}
 	}
@@ -655,27 +660,18 @@ int skinny_mutex_cond_timedwait(pthread_cond_t *cond, skinny_mutex_t *skinny,
        /* Relinquish the mutex.  But we leave our reference accounted
           for in fat->refcount in place, in order to pin the
           fat_mutex. */
-	fat->held = 0;
+	c.fat->held = 0;
 
 	/* pthread_cond_wait is a cancellation point */
-	pthread_cleanup_push(cond_wait_cleanup, skinny);
+	pthread_cleanup_push(cond_wait_cleanup, &c);
 
 	if (!abstime)
-		res = pthread_cond_wait(cond, &fat->mutex);
+		res = pthread_cond_wait(cond, &c.fat->mutex);
 	else
-		res = pthread_cond_timedwait(cond, &fat->mutex, abstime);
+		res = pthread_cond_timedwait(cond, &c.fat->mutex, abstime);
 
-	pthread_cleanup_pop(0);
-
-	if (!res || res == ETIMEDOUT)
-		return recover(res, fat_mutex_lock(skinny, fat));
-
-	/* The pthreads spec says that errors are reported as
-	 * though the mutex was not dropped. */
-	assert(!fat->held);
-	fat->held = 1;
-	pthread_mutex_unlock(&fat->mutex);
-	return res;
+	pthread_cleanup_pop(1);
+	return recover(res, c.lock_res);
 }
 
 int skinny_mutex_cond_wait(pthread_cond_t *cond, skinny_mutex_t *skinny)
